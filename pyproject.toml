@@ -1,6 +1,6 @@
 [project]
 name = "vsdx-shrinker"
-version = "0.1.0"
+version = "0.1.1"
 description = "Remove unused master shapes from Visio (.vsdx) files to dramatically reduce file size"
 authors = [{name = "cognitohazard"}]
 license = {text = "MIT"}

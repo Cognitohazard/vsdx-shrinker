@@ -148,10 +148,9 @@ def _validate_vsdx_structure(paths: VsdxPaths) -> None:
     masters = root.findall('.//v:Master', NAMESPACES)
     if masters:
         sample = masters[0]
-        required_attrs = {'ID', 'NameU'}
-        missing = required_attrs - set(sample.attrib.keys())
-        if missing:
-            errors.append(f"Master elements missing required attributes: {missing}")
+        # Only ID is truly required; NameU is optional (some Visio files omit it)
+        if 'ID' not in sample.attrib:
+            errors.append("Master elements missing required attribute: ID")
 
         # Check Rel child element exists and uses expected namespace
         rel = sample.find('.//v:Rel', NAMESPACES)
