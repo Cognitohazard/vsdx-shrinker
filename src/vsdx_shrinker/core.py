@@ -230,7 +230,7 @@ def _parse_masters_xml(masters_xml_path: Path) -> tuple[ET.Element, Dict[str, Di
 
     masters_info: Dict[str, Dict] = {}
     for master in root.findall('.//v:Master', NAMESPACES):
-        name = master.get('NameU', '')
+        name = master.get('NameU', '') or master.get('Name', '') or master.get('ID', '')
         if name:
             rel = master.find('.//v:Rel', NAMESPACES)
             masters_info[name] = {
