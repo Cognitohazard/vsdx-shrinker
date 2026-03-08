@@ -422,6 +422,17 @@ def shrink_vsdx(
                 masters_root.remove(masters_info[name]['element'])
                 masters_removed += 1
 
+        # Clean up orphaned masters whose backing file is already missing
+        # (e.g. from a previous run with the NameU bug)
+        for name in list(used_names):
+            if name in masters_info:
+                rel_id = masters_info[name]['rel_id']
+                target = rels_info.get(rel_id, '')
+                if not target or not (paths.masters_dir / target).exists():
+                    masters_root.remove(masters_info[name]['element'])
+                    keep_rel_ids.discard(rel_id)
+                    masters_removed += 1
+
         ET.ElementTree(masters_root).write(
             paths.masters_xml, encoding='utf-8', xml_declaration=True
         )
