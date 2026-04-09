@@ -44,7 +44,8 @@ class VsdxPaths:
 
 def _bytes_to_mb(size_bytes: int) -> float:
     """Convert bytes to megabytes, rounded to 2 decimal places."""
-    return round(size_bytes / (1024 * 1024), 2)
+    result = round(size_bytes / (1024 * 1024), 2)
+    return result + 0.0  # normalize -0.0 to 0.0
 
 
 def _validate_vsdx_path(path: str) -> Path:
@@ -60,7 +61,7 @@ def _validate_vsdx_path(path: str) -> Path:
 def _get_namespace(element: ET.Element) -> str:
     """Extract namespace URI from an element's tag."""
     if '}' in element.tag:
-        return element.tag.split('}')[0].strip('{')
+        return element.tag.split('}')[0].lstrip('{')
     return ''
 
 
@@ -206,8 +207,8 @@ def _find_used_masters(pages_dir: Path, masters_info: Dict[str, Dict]) -> Set[st
     id_to_name = {info['id']: name for name, info in masters_info.items()}
 
     # Patterns for both reference types
-    use_pattern = re.compile(r'USE\("([^"]+)"\)')
-    master_attr_pattern = re.compile(r'\bMaster=["\'](\d+)["\']')
+    use_pattern = re.compile(r'\bUSE\("([^"]+)"\)')
+    master_attr_pattern = re.compile(r'\bMaster=(["\'])(\d+)\1')
 
     for page_file in _get_page_files(pages_dir):
         content = _read_xml_file(page_file)
@@ -216,7 +217,7 @@ def _find_used_masters(pages_dir: Path, masters_info: Dict[str, Dict]) -> Set[st
         used_names.update(use_pattern.findall(content))
 
         # Method 2: Master="ID" attributes on shapes (instance relationship)
-        for master_id in master_attr_pattern.findall(content):
+        for _, master_id in master_attr_pattern.findall(content):
             if master_id in id_to_name:
                 used_names.add(id_to_name[master_id])
 
@@ -232,8 +233,10 @@ def _parse_masters_xml(masters_xml_path: Path) -> tuple[ET.Element, Dict[str, Di
     for master in root.findall('.//v:Master', NAMESPACES):
         name = master.get('NameU', '') or master.get('Name', '') or master.get('ID', '')
         if name:
+            # Use ID as key when NameU collides to avoid silently losing masters
+            key = name if name not in masters_info else master.get('ID', name)
             rel = master.find('.//v:Rel', NAMESPACES)
-            masters_info[name] = {
+            masters_info[key] = {
                 'id': master.get('ID', ''),
                 'rel_id': _get_rel_id(rel),
                 'element': master,
