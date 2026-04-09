@@ -9,7 +9,9 @@ and negative-zero floating-point artifacts.
 
 import math
 import os
+import shutil
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -32,14 +34,18 @@ from vsdx_shrinker.core import (
 # helpers
 # ---------------------------------------------------------------------------
 
-def _make_pages_dir(page_content: str) -> Path:
+@contextmanager
+def _make_pages_dir(page_content: str):
     """Create a temp pages directory with a single page file containing
-    ``page_content``.  The caller must clean up the parent temp dir."""
+    ``page_content``.  Automatically cleaned up on exit."""
     tmp = Path(tempfile.mkdtemp())
     pages_dir = tmp / "pages"
     pages_dir.mkdir()
     (pages_dir / "page1.xml").write_text(page_content, encoding="utf-8")
-    return pages_dir
+    try:
+        yield pages_dir
+    finally:
+        shutil.rmtree(tmp)
 
 
 def _write_masters_xml(xml_content: str) -> Path:
@@ -63,40 +69,23 @@ class TestUsePatternWordBoundary:
     MASTERS_INFO = {"Arrow": {"id": "1", "rel_id": "rId1"}}
 
     def test_standalone_use_is_found(self):
-        pages_dir = _make_pages_dir('F="USE(&quot;Arrow&quot;)" />')
-        try:
-            # USE("Arrow") is a genuine Visio formula reference — must be found
-            # Note: in real VSDX, USE() uses &quot; for quotes in XML context,
-            # but the raw regex scans for literal double-quotes.  Test both.
-            pages_dir_raw = _make_pages_dir('USE("Arrow")')
-            used = _find_used_masters(pages_dir_raw, self.MASTERS_INFO)
+        with _make_pages_dir('USE("Arrow")') as pages_dir:
+            used = _find_used_masters(pages_dir, self.MASTERS_INFO)
             assert "Arrow" in used
-        finally:
-            import shutil
-            shutil.rmtree(pages_dir.parent)
-            shutil.rmtree(pages_dir_raw.parent)
 
     def test_refuse_is_not_matched(self):
-        pages_dir = _make_pages_dir('REFUSE("Arrow")')
-        try:
+        with _make_pages_dir('REFUSE("Arrow")') as pages_dir:
             used = _find_used_masters(pages_dir, self.MASTERS_INFO)
             assert "Arrow" not in used, (
                 "REFUSE(\"Arrow\") falsely matched — missing \\b word boundary"
             )
-        finally:
-            import shutil
-            shutil.rmtree(pages_dir.parent)
 
     def test_fuse_abuse_reuse_not_matched(self):
         """Several words ending in USE must not trigger a false positive."""
         for prefix in ("FUSE", "ABUSE", "REUSE", "MISUSE"):
-            pages_dir = _make_pages_dir(f'{prefix}("Arrow")')
-            try:
+            with _make_pages_dir(f'{prefix}("Arrow")') as pages_dir:
                 used = _find_used_masters(pages_dir, self.MASTERS_INFO)
                 assert "Arrow" not in used, f"{prefix} falsely matched"
-            finally:
-                import shutil
-                shutil.rmtree(pages_dir.parent)
 
     @given(prefix=st.text(
         alphabet=st.characters(whitelist_categories=("Lu",)),
@@ -104,13 +93,9 @@ class TestUsePatternWordBoundary:
     ))
     def test_no_alpha_prefix_matches(self, prefix):
         """Any alphabetic prefix + USE("X") must not match."""
-        pages_dir = _make_pages_dir(f'{prefix}USE("Arrow")')
-        try:
+        with _make_pages_dir(f'{prefix}USE("Arrow")') as pages_dir:
             used = _find_used_masters(pages_dir, self.MASTERS_INFO)
             assert "Arrow" not in used, f"{prefix}USE falsely matched"
-        finally:
-            import shutil
-            shutil.rmtree(pages_dir.parent)
 
 
 # ---------------------------------------------------------------------------
@@ -124,35 +109,23 @@ class TestMasterAttrPattern:
     MASTERS_INFO = {"Arrow": {"id": "42", "rel_id": "rId1"}}
 
     def test_matched_double_quotes_found(self):
-        pages_dir = _make_pages_dir('<Shape Master="42"/>')
-        try:
+        with _make_pages_dir('<Shape Master="42"/>') as pages_dir:
             used = _find_used_masters(pages_dir, self.MASTERS_INFO)
             assert "Arrow" in used
-        finally:
-            import shutil
-            shutil.rmtree(pages_dir.parent)
 
     def test_matched_single_quotes_found(self):
-        pages_dir = _make_pages_dir("<Shape Master='42'/>")
-        try:
+        with _make_pages_dir("<Shape Master='42'/>") as pages_dir:
             used = _find_used_masters(pages_dir, self.MASTERS_INFO)
             assert "Arrow" in used
-        finally:
-            import shutil
-            shutil.rmtree(pages_dir.parent)
 
     def test_mismatched_quotes_not_matched(self):
         """Mismatched quotes are not valid XML — must not match."""
         for content in ('Master="42\'', "Master='42\""):
-            pages_dir = _make_pages_dir(content)
-            try:
+            with _make_pages_dir(content) as pages_dir:
                 used = _find_used_masters(pages_dir, self.MASTERS_INFO)
                 assert "Arrow" not in used, (
                     f"Mismatched quotes in {content!r} falsely matched"
                 )
-            finally:
-                import shutil
-                shutil.rmtree(pages_dir.parent)
 
 
 # ---------------------------------------------------------------------------

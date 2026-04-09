@@ -23,6 +23,10 @@ PKG_REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
 
 NAMESPACES = {'v': VISIO_NS, 'r': REL_NS}
 
+# Regex patterns for finding master references in page XML
+_USE_PATTERN = re.compile(r'\bUSE\("([^"]+)"\)')
+_MASTER_ATTR_PATTERN = re.compile(r'\bMaster=(["\'])(\d+)\1')
+
 for prefix, uri in NAMESPACES.items():
     ET.register_namespace(prefix, uri)
 
@@ -126,11 +130,12 @@ def _get_page_files(pages_dir: Path) -> List[Path]:
     return page_files
 
 
-def _validate_vsdx_structure(paths: VsdxPaths) -> None:
-    """Validate VSDX structure before processing. Raises VsdxFormatError if invalid."""
-    if not paths.masters_xml.exists():
-        return
-
+def _validate_vsdx_structure(
+    paths: VsdxPaths,
+    masters_root: ET.Element,
+    rels_root: Optional[ET.Element] = None,
+) -> None:
+    """Validate VSDX structure using pre-parsed XML roots. Raises VsdxFormatError if invalid."""
     errors: List[str] = []
 
     # 1. Required files
@@ -140,13 +145,12 @@ def _validate_vsdx_structure(paths: VsdxPaths) -> None:
         errors.append("Missing pages directory")
 
     # 2. Visio namespace validation
-    root = _parse_xml_file(paths.masters_xml)
-    ns = _get_namespace(root)
+    ns = _get_namespace(masters_root)
     if ns and ns != VISIO_NS:
         errors.append(f"Unexpected namespace: {ns}\n    Expected: {VISIO_NS}")
 
     # 3. Master element structure validation
-    masters = root.findall('.//v:Master', NAMESPACES)
+    masters = masters_root.findall('.//v:Master', NAMESPACES)
     if masters:
         sample = masters[0]
         # Only ID is truly required; NameU is optional (some Visio files omit it)
@@ -170,8 +174,7 @@ def _validate_vsdx_structure(paths: VsdxPaths) -> None:
 
     # 4. Relationships file namespace validation
     rels_ids: Set[str] = set()
-    if paths.rels_path.exists():
-        rels_root = _parse_xml_file(paths.rels_path)
+    if rels_root is not None:
         rels_ns = _get_namespace(rels_root)
         if rels_ns and rels_ns != PKG_REL_NS:
             errors.append(f"Unexpected relationships namespace: {rels_ns}\n    Expected: {PKG_REL_NS}")
@@ -206,18 +209,14 @@ def _find_used_masters(pages_dir: Path, masters_info: Dict[str, Dict]) -> Set[st
     # Build ID -> Name lookup for Master="ID" references
     id_to_name = {info['id']: name for name, info in masters_info.items()}
 
-    # Patterns for both reference types
-    use_pattern = re.compile(r'\bUSE\("([^"]+)"\)')
-    master_attr_pattern = re.compile(r'\bMaster=(["\'])(\d+)\1')
-
     for page_file in _get_page_files(pages_dir):
         content = _read_xml_file(page_file)
 
         # Method 1: USE("name") patterns (formula inheritance)
-        used_names.update(use_pattern.findall(content))
+        used_names.update(_USE_PATTERN.findall(content))
 
         # Method 2: Master="ID" attributes on shapes (instance relationship)
-        for _, master_id in master_attr_pattern.findall(content):
+        for _, master_id in _MASTER_ATTR_PATTERN.findall(content):
             if master_id in id_to_name:
                 used_names.add(id_to_name[master_id])
 
@@ -327,10 +326,9 @@ def analyze_vsdx(vsdx_path: str) -> Dict:
                 'used_names': [], 'unused_names': [], 'potential_savings_mb': 0.0,
             }
 
-        _validate_vsdx_structure(paths)
-
-        _, masters_info = _parse_masters_xml(paths.masters_xml)
-        _, rels_info = _parse_rels_xml(paths.rels_path)
+        masters_root, masters_info = _parse_masters_xml(paths.masters_xml)
+        rels_root, rels_info = _parse_rels_xml(paths.rels_path)
+        _validate_vsdx_structure(paths, masters_root, rels_root)
 
         used_names = _find_used_masters(paths.pages_dir, masters_info)
         all_names = set(masters_info.keys())
@@ -395,12 +393,10 @@ def shrink_vsdx(
                 shutil.copy2(path, final_output)
             return _empty_result(original_size, str(final_output))
 
-        # Validate structure before processing
-        _validate_vsdx_structure(paths)
-
-        # Parse masters and relationships
+        # Parse masters and relationships, then validate
         masters_root, masters_info = _parse_masters_xml(paths.masters_xml)
         rels_root, rels_info = _parse_rels_xml(paths.rels_path)
+        _validate_vsdx_structure(paths, masters_root, rels_root)
 
         # Identify used vs unused masters (both USE() and Master="ID" references)
         used_names = _find_used_masters(paths.pages_dir, masters_info)
