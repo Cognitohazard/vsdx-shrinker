@@ -37,6 +37,7 @@ ENV/
 .coverage.*
 htmlcov/
 .pytest_cache/
+.hypothesis/
 
 # uv
 .uv/
